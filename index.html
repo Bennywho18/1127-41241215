@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google 認證與會員系統</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background-color: #f9f9f9;
+    }
+    h1 {
+      margin-bottom: 20px;
+    }
+    #user-info {
+      text-align: center;
+      margin-top: 20px;
+    }
+    #logout-container {
+      margin-top: 10px; /* 與圖片之間的間距 */
+      text-align: center;
+    }
+    button {
+      margin-top: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      background-color: #4285f4;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #357ae8;
+    }
+    img {
+      margin-top: 10px;
+      border-radius: 50%;
+      width: 100px;
+      height: 100px;
+    }
+  </style>
+  <script type="module">
+    // Import Firebase modules
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-analytics.js";
+    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+    import { getDatabase, ref,get, set, update, remove } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
+    
+
+    // Your Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyDfdX5eUpY33Dh_nvgFuk6cQrxqRRjDM7w",
+      authDomain: "fir-01-25708.firebaseapp.com",
+      databaseURL: "https://fir-01-25708-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "fir-01-25708",
+      storageBucket: "fir-01-25708.firebasestorage.app",
+      messagingSenderId: "1038722408585",
+      appId: "1:1038722408585:web:27d27a5e48292f3af62658",
+      measurementId: "G-FS3878JT8V"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const auth = getAuth(app);
+    const database = getDatabase(app);
+    const provider = new GoogleAuthProvider();
+
+    // 格式化日期為本地時間
+    function formatLocalTime(isoString) {
+      const date = new Date(isoString);
+      return date.toLocaleString(); // 使用本地日期時間格式
+    }
+
+ // 在 googleSignIn 函數裡
+ async function googleSignIn(isRegister) {
+  try {
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+
+    // 取得用戶資料
+    const { displayName, email, photoURL, uid } = user;
+    const currentISOTime = new Date().toISOString(); // 當前時間的 ISO 格式
+    const lastLogin = formatLocalTime(currentISOTime); // 格式化為本地時間
+
+    // Realtime Database 路徑
+    const userRef = ref(database, `users/${uid}`);
+
+    if (isRegister) {
+      // 註冊流程：將用戶資訊寫入 Database
+      await set(userRef, {
+        name: displayName,
+        email: email,
+        photo: photoURL,
+        lastLogin: currentISOTime,
+      });
+      alert("註冊成功！");
+    } else {
+      // 登入流程：更新最後登入時間
+      await update(userRef, {
+        lastLogin: currentISOTime,
+      });
+      alert("登入成功！");
+    }
+
+    // 在畫面上顯示用戶資訊
+    displayUserInfo({ name: displayName, email: email, photo: photoURL, lastLogin, uid });
+
+    // 加載歷史紀錄 (確保 uid 正確傳遞)
+    await loadHistoryFromFirebase(uid); 
+  } catch (error) {
+    console.error("Google 登入錯誤", error);
+    alert("登入失敗：" + error.message);
+  }
+}
+
+
+
+
+    // Google 登出邏輯
+    async function googleSignOut() {
+      try {
+        await signOut(auth);
+        alert("已成功登出！");
+        resetUI();
+      } catch (error) {
+      }
+    }
+
+    async function saveNoteToFirebase(uid) {
+  const title = document.getElementById("note-title").value.trim();
+  const content = document.getElementById("note-content").value.trim();
+
+  if (!title || !content) {
+    alert("標題和內容不能為空！");
+    return;
+  }
+
+  try {
+    const notesRef = ref(database, `users/${uid}/notes`);
+    const newNoteRef = ref(database, `users/${uid}/notes/${Date.now()}`); // 用時間戳作為鍵值
+
+    // 保存筆記
+    await set(newNoteRef, {
+      title,
+      content,
+      createdAt: new Date().toISOString(),
+    });
+
+    // 更新歷史紀錄
+    const historyRef = ref(database, `users/${uid}/history`);
+    const newHistoryRef = ref(database, `users/${uid}/history/${Date.now()}`);
+    await set(newHistoryRef, {
+      title,
+      content,
+      createdAt: new Date().toISOString(),
+    });
+
+    alert("筆記保存成功！");
+    document.getElementById("note-title").value = ""; // 清空標題輸入框
+    document.getElementById("note-content").value = ""; // 清空內容輸入框
+
+    // 顯示歷史紀錄
+    loadHistoryFromFirebase(uid);
+  } catch (error) {
+    console.error("保存筆記失敗", error);
+    alert("保存失敗：" + error.message);
+  }
+}
+
+async function loadHistoryFromFirebase(uid) {
+  try {
+    const historyRef = ref(database, `users/${uid}/history`);
+    const snapshot = await get(historyRef);
+
+    if (snapshot.exists()) {
+      const historyData = snapshot.val();
+      const historyList = document.getElementById("history-list");
+      historyList.innerHTML = ""; // 清空現有的歷史紀錄
+
+      Object.entries(historyData).forEach(([key, historyItem]) => {
+        const listItem = document.createElement("li");
+        listItem.classList.add("list-group-item", "d-flex", "justify-content-between", "align-items-center");
+        listItem.innerHTML = `
+          <div>
+            <strong>${historyItem.title}</strong><br>
+            ${historyItem.content}<br>
+            <small>保存時間: ${formatLocalTime(historyItem.createdAt)}</small>
+          </div>
+          <button class="btn btn-sm btn-primary edit-button" data-bs-toggle="modal" data-bs-target="#editNoteModal" 
+            data-id="${key}" data-title="${historyItem.title}" data-content="${historyItem.content}">
+            編輯
+          </button>
+         <button class="btn btn-sm btn-danger delete-button" data-id="${key}">刪除</button>
+        `;
+        historyList.appendChild(listItem);
+      });
+
+      // 綁定編輯按鈕事件
+      document.querySelectorAll(".edit-button").forEach(button => {
+        button.addEventListener("click", event => {
+          const id = event.target.getAttribute("data-id");
+          const title = event.target.getAttribute("data-title");
+          const content = event.target.getAttribute("data-content");
+
+          // 填充 Modal 的內容
+          document.getElementById("edit-note-title").value = title;
+          document.getElementById("edit-note-content").value = content;
+
+          // 保存更改的邏輯
+          document.getElementById("save-edit-button").onclick = () => saveEditToFirebase(uid, id);
+        });
+      });
+
+      document.querySelectorAll(".delete-button").forEach(button => {
+  button.addEventListener("click", event => {
+    const noteId = event.target.getAttribute("data-id");
+    showDeleteConfirmationModal(uid, noteId);
+  });
+});
+
+      document.getElementById("history-container").style.display = "block";
+    } else {
+      console.log("歷史紀錄不存在");
+      document.getElementById("history-container").style.display = "none";
+    }
+  } catch (error) {
+    console.error("載入歷史紀錄失敗", error);
+    alert("載入失敗：" + error.message);
+  }
+}
+
+
+async function saveEditToFirebase(uid, noteId) {
+  const title = document.getElementById("edit-note-title").value.trim();
+  const content = document.getElementById("edit-note-content").value.trim();
+
+  if (!title || !content) {
+    alert("標題和內容不能為空！");
+    return;
+  }
+
+  try {
+    const noteRef = ref(database, `users/${uid}/history/${noteId}`);
+
+    // 更新筆記內容
+    await update(noteRef, {
+      title,
+      content,
+      updatedAt: new Date().toISOString(),
+    });
+
+    // 隱藏 Modal（Bootstrap 方式）
+    const editNoteModal = bootstrap.Modal.getInstance(document.getElementById("editNoteModal"));
+    editNoteModal.hide();
+
+    // 重新載入歷史紀錄
+    loadHistoryFromFirebase(uid);
+  } catch (error) {
+    console.error("更新筆記失敗", error);
+    alert("更新失敗：" + error.message);
+  }
+}
+
+
+
+
+
+    // 顯示用戶資訊
+    function displayUserInfo(user) {
+  const { name, email, photo, lastLogin, uid } = user;
+
+  // 填充用戶資訊到 Modal
+  const modalUserInfo = document.getElementById("modal-user-info");
+  modalUserInfo.innerHTML = `
+    <img src="${photo}" alt="用戶頭像" class="img-fluid rounded-circle mb-3" style="width: 120px; height: 120px;" />
+    <p><strong>姓名：</strong>${name}</p>
+    <p><strong>Email：</strong>${email}</p>
+    <p><strong>最後登入時間：</strong>${lastLogin}</p>
+  `;
+
+  // 更新主畫面按鈕
+  const userInfoDiv = document.getElementById("user-info");
+  const logoutContainer = document.getElementById("logout-container");
+
+  userInfoDiv.innerHTML = `
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#userInfoModal">查看用戶資訊</button>
+  `;
+
+  logoutContainer.innerHTML = `
+    <button id="logout-button" class="btn btn-danger ms-2">登出</button>
+  `;
+
+  // 顯示筆記區
+  document.getElementById("note-container").style.display = "block";
+
+  // 加載歷史紀錄 (立即呼叫)
+  loadHistoryFromFirebase(uid);
+
+  // 綁定登出按鈕事件
+  document.getElementById("logout-button").addEventListener("click", googleSignOut);
+
+  // 綁定保存筆記按鈕事件
+  document.getElementById("save-note-button").addEventListener("click", () => saveNoteToFirebase(uid));
+}
+
+
+
+function resetUI() {
+  const userInfoDiv = document.getElementById("user-info");
+  const logoutContainer = document.getElementById("logout-container");
+
+  userInfoDiv.innerHTML = `
+    <button class="btn btn-success" onclick="googleSignIn(true)">註冊</button>
+    <button class="btn btn-primary ms-2" onclick="googleSignIn(false)">登入</button>
+  `;
+  logoutContainer.innerHTML = ""; // 清空登出按鈕
+  document.getElementById("note-container").style.display = "none"; // 隱藏筆記區
+  document.getElementById("history-container").style.display = "none"; // 隱藏歷史紀錄區
+}
+
+
+    // 頁面載入時初始化 UI
+    window.onload = resetUI;
+
+    // 為按鈕綁定事件
+    window.googleSignIn = googleSignIn;
+
+
+
+    // 頁面載入時初始化 UI
+// 頁面載入時初始化 UI
+window.onload = async () => {
+  const user = auth.currentUser; // 取得當前用戶
+
+  if (user) {
+    // 用戶已登入，顯示用戶資訊及歷史紀錄
+    displayUserInfo({
+      name: user.displayName,
+      email: user.email,
+      photo: user.photoURL,
+      lastLogin: formatLocalTime(user.metadata.lastSignInTime), // 取登入時間
+      uid: user.uid
+    });
+
+    // 顯示歷史紀錄
+    loadHistoryFromFirebase(user.uid);
+  } else {
+    // 用戶未登入，顯示初始 UI
+    resetUI();
+  }
+};
+
+function showDeleteConfirmationModal(uid, noteId) {
+  const deleteModal = new bootstrap.Modal(document.getElementById("deleteConfirmationModal"));
+  deleteModal.show();
+
+  document.getElementById("confirm-delete-button").onclick = () => {
+    // 第一層確認
+    if (confirm("您確定要刪除此筆歷史紀錄嗎？")) {
+      // 第二層確認
+      if (confirm("確定刪除？此操作無法復原！")) {
+        deleteNoteFromFirebase(uid, noteId);
+      }
+    }
+  };
+}
+
+async function deleteNoteFromFirebase(uid, noteId) {
+  try {
+    const noteRef = ref(database, `users/${uid}/history/${noteId}`);
+    await remove(noteRef);
+    alert("刪除成功！");
+    loadHistoryFromFirebase(uid); // 重新載入歷史紀錄
+    // 關閉所有開啟的模態框
+    const modals = document.querySelectorAll('.modal'); // 選擇所有 .modal 元素
+    modals.forEach(modal => {
+      const modalInstance = bootstrap.Modal.getInstance(modal);
+      if (modalInstance) {
+        modalInstance.hide(); // 隱藏該 modal
+      }
+    });
+  } catch (error) {
+    console.error("刪除筆記失敗", error);
+    alert("刪除失敗：" + error.message);
+  }
+}
+
+
+
+
+    
+  </script>
+</head>
+<body>
+  <h1>Google 認證與會員系統</h1>
+  <div id="user-info"></div>
+  <div id="logout-container"></div>
+  <div class="modal fade" id="userInfoModal" tabindex="-1" aria-labelledby="userInfoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered"> <!-- 使用 modal-dialog-centered 將整個 Modal 置中 -->
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title w-100 text-center" id="userInfoModalLabel">用戶資訊</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body d-flex flex-column align-items-center text-center">
+          <div id="modal-user-info">
+            <!-- 用戶資訊將被動態填充 -->
+          </div>
+        </div>
+        <div class="modal-footer justify-content-center">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+        </div>
+      </div>
+    </div>
+  </div>  
+  </div>
+  <div id="note-container" class="mt-3" style="display: none;">
+    <h3 class="text-center">筆記區</h3>
+    <div class="mb-3">
+      <label for="note-title" class="form-label">標題</label>
+      <input type="text" id="note-title" class="form-control" placeholder="輸入標題">
+    </div>
+    <div class="mb-3">
+      <label for="note-content" class="form-label">內容</label>
+      <textarea id="note-content" class="form-control" rows="4" placeholder="輸入內容"></textarea>
+    </div>
+    <button id="save-note-button" class="btn btn-success w-100">保存筆記</button>
+  </div>
+  <div id="history-container" class="mt-3" style="display: none;">
+    <h3>歷史紀錄</h3>
+    <ul id="history-list" class="list-group">
+      <!-- 歷史紀錄項目將會動態顯示在這裡 -->
+    </ul>
+  </div>
+  <!-- Modal for editing notes -->
+<div class="modal fade" id="editNoteModal" tabindex="-1" aria-labelledby="editNoteModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="editNoteModalLabel">編輯筆記</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="edit-note-title" class="form-label">標題</label>
+          <input type="text" id="edit-note-title" class="form-control">
+        </div>
+        <div class="mb-3">
+          <label for="edit-note-content" class="form-label">內容</label>
+          <textarea id="edit-note-content" class="form-control" rows="4"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-primary" id="save-edit-button">保存更改</button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Modal 刪除確認 -->
+<div class="modal fade" id="deleteConfirmationModal" tabindex="-1" aria-labelledby="deleteConfirmationModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteConfirmationModalLabel">確認刪除歷史紀錄</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>您確定要刪除此筆歷史紀錄嗎？</p>
+        <button class="btn btn-danger" id="confirm-delete-button">刪除</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
